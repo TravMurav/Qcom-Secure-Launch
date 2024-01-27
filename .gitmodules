@@ -1,9 +1,0 @@
-[submodule "stagelinux/external/dtc"]
-	path = slplaunch/external/dtc
-	url = https://git.kernel.org/pub/scm/utils/dtc/dtc.git
-[submodule "stagelinux/external/gnu-efi"]
-	path = slplaunch/external/gnu-efi
-	url = https://git.code.sf.net/p/gnu-efi/code
-[submodule "stagelinux/external/arm64-sysreg-lib"]
-	path = slplaunch/external/arm64-sysreg-lib
-	url = https://github.com/ashwio/arm64-sysreg-lib.git

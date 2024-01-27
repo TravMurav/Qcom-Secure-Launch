@@ -1,6 +1,10 @@
 Windows Secure-Launch on Qualcomm devices
 ========================================
 
+> [!NOTE]
+> An alternative implementation of Secure-Launch process is available in
+> [SLBounce](https://github.com/TravMurav/slbounce)
+
 Modern Windows almost always uses Hyper-V to provide certain virtualization
 features (i.e. WSL2) or maintain enhanced security (i.e. VBS). On ARM based
 devices the hypervisor usually runs in second exception level - EL2 (compared
@@ -25,6 +29,8 @@ This means that the Microsoft bootloader has to rely on some custom mechanism
 to take over EL2 and boot the hypervisor. This document attempts to give an
 overview of the takeover process, focusing on the intended chain of trust.
 
+Background information
+----------------------
 
 ### EL2 on Qualcomm devices
 
@@ -70,10 +76,17 @@ the hardware secure boot is disabled and any valid signature is accepted.
 Secure-Launch process
 --------------------
 
-> **Note**  
+> [!IMPORTANT]
 > The following chapter contains references to decompiled code in the
 > firmware and Windows bootloader. Only blobs extracted from a retail
 > device were used for this research.
+
+> [!NOTE]
+> The process overview described below is a high level description
+> that glosses over some specific details and only establishes the
+> chain of trust of the Secure-Launch process. The analysis was done
+> using sc7180 based device and newer platforms may have various
+> differences in the implementation.
 
 ### UEFI startup
 
@@ -81,11 +94,10 @@ Initial boot for the SoC is the same as on most other Snapdragon platforms.
 The only difference is that the more conventional UEFI firmware "front-end"
 is launched instead of the android bootloader.
 
-Qualcomm's [Secure Boot overview v2.0](https://www.qualcomm.com/media/documents/files/secure-boot-and-image-authentication-technical-overview-v2-0.pdf)
-suggests that the boot is performed in the following way:
+By reading Qualcomm's [Secure Boot overview v2.0](https://www.qualcomm.com/media/documents/files/secure-boot-and-image-authentication-technical-overview-v2-0.pdf)
+we may make a guess that the firmware boots in a way, similar to this:
 
 ![Qualcomm firmware boot process](./assets/qcom-fw-boot.svg)
-
 
 PBL - the SoC bootrom is started as the first code in the system. It's
 burned in the chip silicon and is impossible to replace. PBL then loads
@@ -208,9 +220,15 @@ The second call passes the image data to the `mssecapp` to authenticate:
 // ...
 ```
 
+Interestingly, mssecapp only does the verification on the next step, so
+this call will always succeed.
+
 The third call checks for the flag set by the second and, if the
-flag is set, asks `mssecapp` for the entry point address and jumps to the
-image:
+flag is set, asks `mssecapp` to relocate the PE, create a memory map and
+find an entry point. Then hyp does varios preparations like mapping the
+memory based on the received memory map, updating SMMU settings, changing
+the ACPI tables and making sure only one cpu is running before jumping to
+the received entry point.
 
 ```c
 // ...
@@ -238,13 +256,13 @@ image:
 // ...
 ```
 
-After the third call the `tcblaunch.exe` takes control of EL2.
+After this call the `tcblaunch.exe` takes control of EL2.
 `BlSlEntryPoint` is called with the parameters passed. This function sets
 up the stack, performs some validation on the input data before overriding
 the `vbar_el2` with a new exception vector and demoting itself to EL1. Then
 it continues the boot process.
 
-When the second call happens, the image is verified by the `mssecapp` in the
+As part of the third call, the image is verified by the `mssecapp` in the
 `VerifyApp` function. Similarly to how [drivers are checked](https://www.iasj.net/iasj/download/40eb00455c0a5a1f) in Windows, the `MinCrypL_CheckSignedFile`
 is used to verify that the PE is signed with a Microsoft key. The keyring
 for the check is hardcoded in the `mssecapp.mbn`, which, in combination with
@@ -264,34 +282,9 @@ A full boot-flow chart for Secure-Launch:
 ![Secure-Launch boot flow](./assets/secure-launch.svg)
 
 
-Future ideas
-------------
+Future work
+-----------
 
-While the Secure-Launch implementation makes sure that no alternative OS
-can launch in EL2 out of the box, it might be possible to make use of some
-Windows boot chain components, such as `tcblaunch.exe` in a way, that would
-allow arbitrary code to run. While `mssecapp` takes a measurement of the
-data struct passed to the `tcblaunch`, presumably into the Microsoft's TPM,
-it might allow one to pass specially crafted launch data that would run
-user code right after `tcblaunch` demotes to EL1.
-
-The specially crafted data would have to at least pass the checks inside
-the `mssecapp`, which include having correct size fields; passing some
-signing certificate for the payload PE and passing the measurement process,
-that fills some information in the passed data structure.
-
-After that the same structure should be good enough for `tcblaunch` to
-get to setting the `vbar_el2`: it should be able to use a provided stack;
-successfully map all the memory and at the very least fail validating the
-next stage boot parameters, jumping to the failure path code, provided in
-the data struct.
-
-Since at this point the EL2 interrupt vector is already set to the TCB one,
-such user code could easily elevate back to EL2 by just making a `hvc #1`
-hypercall.
-
-A simple, incomplete and broken PoC of booting the `tcblaunch.exe` can
-be found in the `slplaunch` directory in this repo. It has minimal code
-to run Secure-Launch process with an arbitrary PE but doesn't have
-any data payload which makes it fail the checks.
-
+While the Secure-Launch implementation doesn't make any provision for
+alternative OS to make use of EL2, it's possible to use existing `tcblaunch.exe`
+to switch the CPU into EL2. An implementation of this is available in [SLBounce](https://github.com/TravMurav/slbounce)
