@@ -21,20 +21,24 @@ immediately start in EL2, which is mandated by specifications such as
 > **Systems must boot UEFI at EL2**, to allow for the installation of a
 > hypervisor or a virtualization-aware operating system.
 
-Unfortunately, Snapdragon based compute platforms don't conform to this
-part of the specification, instead booting the UEFI in EL1 despite allowing
+Unfortunately, Snapdragon based compute platforms prior to X2 didn't conform to
+this part of the specification, instead booting the UEFI in EL1 despite allowing
 virtualization.
 
 This means that the Microsoft bootloader has to rely on some custom mechanism
 to take over EL2 and boot the hypervisor. This document attempts to give an
 overview of the takeover process, focusing on the intended chain of trust.
 
+> [!NOTE]
+> Since Snapdragon X2 series has changed the way system boots (and EFI now runs
+> in EL2), those and later devices are not covered by this document.
+
 Background information
 ----------------------
 
 ### EL2 on Qualcomm devices
 
-Generally, with few exceptions, the EL2 is never available to the user on
+Generally, with few exceptions, the EL2 was never available to the user on
 Snapdragon devices. On older platforms (like msm8916) the hyp
 firmware does absolutely nothing useful and is safe to stub out.
 (Which is proven by [qhypstub](https://github.com/msm8916-mainline/qhypstub))
@@ -52,6 +56,25 @@ allow the OS to boot in EL2. The TF-A build still relies on a huge
 proprietary library, that [implements all the hw related stuff](https://lists.trustedfirmware.org/archives/list/tf-a@lists.trustedfirmware.org/message/25UDM77JKUSMXATUKJVD5BTDFGHRKBYK/)
 but this is still better than what WoA has.
 
+Another interesting case is firmware on the "Radxa Dragon Q6A" board.
+It seems to run WoA firmware stack but includes some additions that allow the
+EFI firmware to take over Gunyah (modern replacement of QHEE) when booting.
+It's unclear if the takeover feature of Gunyah is common or was developed/enabled
+explicitly by Radxa.
+
+<details>
+    <summary>Radxa Dragon Q6A Gunyah takeover process. (Click to expand)</summary>
+
+    The takeover consists of two parts - Gunyah SMC handler as well as UEFI.
+
+    The takeover is initiated by EnvDxe which checks if `/chosen/radxa,enable-kvm`
+    property exists in the DT, and if it does, issues a special SMC call on EBS.
+    This call - `smc(0x2000121, 0, 0, 1)` is intercepted by Gunyah, at which point
+    it returns execution to the smc caller in EL2. If the UEFI wants to continue
+    booting in EL1 under Gunyah, it notifies it with the same call but with
+    last argument set to zero.
+
+</details>
 
 ### UEFI and hardware secure-boot
 
@@ -273,9 +296,9 @@ Microsoft-approved code is intended to run in EL2 on these Qualcomm devices**.
 In practice this means, that the firmware, by it's design, implements
 vendor-lock-in for the Microsoft OS, locking down some features of the hardware,
 like virtualization, behind a paywall (VM features in Windows are only available
-in pro SKUs). One could speculate that a conspiracy between Microsoft and
-Qualcomm takes place, however it might be as likely that this is a result of
-Qualcomm's stubbornness and/or Microsoft's ignorance on the matter.
+in pro SKUs), even though this design is most likely a result of Qualcomm
+hacking existing codebase together to support Windows usecase, without regard
+to any other users.
 
 A full boot-flow chart for Secure-Launch:
 
